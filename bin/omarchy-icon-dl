@@ -59,7 +59,7 @@ command -v convert &>/dev/null && [[ -z "$MAGICK" ]] && MAGICK="convert"
 # For ICO, extract largest resolution
 if [[ "$TYPE" == "image/x-icon" || "$TYPE" == "image/vnd.microsoft.icon" ]]; then
   IDX=$("$MAGICK" identify "$TMPFILE" 2>/dev/null | awk '{
-    match($3, /([0-9]+)x([0-9]+)/, d); s=d[1]*d[2]
+    split($3, d, "x"); s=d[1]*d[2]
     if(s>m){m=s; i=NR-1}
   } END{print i}')
   [[ -z "$IDX" ]] && IDX=0

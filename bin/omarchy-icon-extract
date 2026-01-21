@@ -40,9 +40,9 @@ resolve_url() {
   echo "${BASE_URL}/$href"
 }
 
-# Helper: extract href from tag
+# Helper: extract href from tag (supports both quote types)
 get_href() {
-  echo "$1" | grep -oE 'href="[^"]*"' | head -1 | sed 's/href="//;s/"$//'
+  echo "$1" | grep -oE "href=[\"'][^\"']*[\"']" | head -1 | sed "s/href=[\"']//;s/[\"']$//"
 }
 
 ICON_URL=""
@@ -64,22 +64,24 @@ if [[ -z "$ICON_URL" ]]; then
     MANIFEST=$(curl -sL --compressed -A "Mozilla/5.0" --max-time 5 "$MANIFEST_URL" 2>/dev/null | sed 's/\\//g' || true)
 
     if [[ -n "$MANIFEST" ]]; then
-      # Find icon with size 128-256px, or first available
+      # Find icon closest to 128px
       BEST_SRC=""
       BEST_DIFF=9999
 
-      while IFS= read -r src; do
+      # Extract each icon object and parse src+sizes together
+      while IFS= read -r icon_obj; do
+        [[ -z "$icon_obj" ]] && continue
+        src=$(echo "$icon_obj" | grep -oE '"src"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/"src"[[:space:]]*:[[:space:]]*"//;s/"$//')
         [[ -z "$src" ]] && continue
-        # Try to find matching size
-        SIZE=$(echo "$MANIFEST" | grep -oE "\"sizes\"[[:space:]]*:[[:space:]]*\"[0-9]+x[0-9]+\"" | \
-          grep -oE '[0-9]+' | head -1 || echo "0")
+        sizes=$(echo "$icon_obj" | grep -oE '"sizes"[[:space:]]*:[[:space:]]*"[0-9]+x[0-9]+"' | grep -oE '[0-9]+' | head -1)
+        SIZE=${sizes:-0}
 
         DIFF=$((SIZE > 128 ? SIZE - 128 : 128 - SIZE))
         if [[ -z "$BEST_SRC" ]] || [[ "$DIFF" -lt "$BEST_DIFF" ]]; then
           BEST_SRC="$src"
           BEST_DIFF="$DIFF"
         fi
-      done <<< "$(echo "$MANIFEST" | grep -oE '"src"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/"src"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')"
+      done <<< "$(echo "$MANIFEST" | tr -d '\n\r' | grep -oE '\{[^{}]*"src"[^{}]*\}')"
 
       [[ -n "$BEST_SRC" ]] && ICON_URL=$(resolve_url "$BEST_SRC")
     fi
