@@ -1,0 +1,104 @@
+#!/bin/bash
+
+# Extract icon URL from a website (target size ~128px)
+# Usage: omarchy-icon-extract <website_url>
+# Returns: URL of suitable icon, or empty if none found
+#
+# Search order:
+#   1. apple-touch-icon (typically 180px, will be downscaled)
+#   2. PWA manifest icons (find ~128-192px)
+#   3. link rel="icon" with sizes
+#   4. /favicon.ico fallback
+
+set -e
+
+URL="$1"
+[[ -z "$URL" ]] && { echo "Usage: omarchy-icon-extract <website_url>" >&2; exit 1; }
+
+# Normalize URL
+[[ ! "$URL" =~ ^https?:// ]] && URL="https://$URL"
+
+# Extract base components
+PROTOCOL="${URL%%://*}"
+DOMAIN=$(echo "$URL" | sed -E 's#^https?://([^/]+).*#\1#')
+BASE_URL="${PROTOCOL}://${DOMAIN}"
+
+# Temp file
+TMPHTML=$(mktemp)
+trap "rm -f '$TMPHTML'" EXIT
+
+# Download page
+curl -sL --compressed -A "Mozilla/5.0" --max-time 10 "$URL" 2>/dev/null | tr -d '\0' > "$TMPHTML"
+[[ ! -s "$TMPHTML" ]] && exit 1
+
+# Helper: resolve relative URL
+resolve_url() {
+  local href="$1"
+  [[ "$href" =~ ^https?:// ]] && { echo "$href"; return; }
+  [[ "$href" =~ ^// ]] && { echo "${PROTOCOL}:$href"; return; }
+  [[ "$href" =~ ^/ ]] && { echo "${BASE_URL}$href"; return; }
+  echo "${BASE_URL}/$href"
+}
+
+# Helper: extract href from tag
+get_href() {
+  echo "$1" | grep -oE 'href="[^"]*"' | head -1 | sed 's/href="//;s/"$//'
+}
+
+ICON_URL=""
+
+# --- Step 1: apple-touch-icon (most reliable, ~180px) ---
+APPLE_LINK=$(grep -oiE '<link[^>]*apple-touch-icon[^>]*>' "$TMPHTML" 2>/dev/null | head -1 || true)
+if [[ -n "$APPLE_LINK" ]]; then
+  HREF=$(get_href "$APPLE_LINK")
+  [[ -n "$HREF" ]] && ICON_URL=$(resolve_url "$HREF")
+fi
+
+# --- Step 2: manifest.json icons ---
+if [[ -z "$ICON_URL" ]]; then
+  MANIFEST_HREF=$(grep -oiE '<link[^>]*rel=["\x27]manifest["\x27][^>]*>' "$TMPHTML" 2>/dev/null | head -1 | \
+    grep -oiE 'href=["\x27][^"\x27]+["\x27]' | sed -E "s/href=[\"']([^\"']+)[\"']/\\1/i" || true)
+
+  if [[ -n "$MANIFEST_HREF" ]]; then
+    MANIFEST_URL=$(resolve_url "$MANIFEST_HREF")
+    MANIFEST=$(curl -sL --compressed -A "Mozilla/5.0" --max-time 5 "$MANIFEST_URL" 2>/dev/null | sed 's/\\//g' || true)
+
+    if [[ -n "$MANIFEST" ]]; then
+      # Find icon with size 128-256px, or first available
+      BEST_SRC=""
+      BEST_DIFF=9999
+
+      while IFS= read -r src; do
+        [[ -z "$src" ]] && continue
+        # Try to find matching size
+        SIZE=$(echo "$MANIFEST" | grep -oE "\"sizes\"[[:space:]]*:[[:space:]]*\"[0-9]+x[0-9]+\"" | \
+          grep -oE '[0-9]+' | head -1 || echo "0")
+
+        DIFF=$((SIZE > 128 ? SIZE - 128 : 128 - SIZE))
+        if [[ -z "$BEST_SRC" ]] || [[ "$DIFF" -lt "$BEST_DIFF" ]]; then
+          BEST_SRC="$src"
+          BEST_DIFF="$DIFF"
+        fi
+      done <<< "$(echo "$MANIFEST" | grep -oE '"src"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/"src"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')"
+
+      [[ -n "$BEST_SRC" ]] && ICON_URL=$(resolve_url "$BEST_SRC")
+    fi
+  fi
+fi
+
+# --- Step 3: link rel="icon" ---
+if [[ -z "$ICON_URL" ]]; then
+  ICON_LINK=$(grep -oiE '<link[^>]*rel=["\x27](icon|shortcut icon)["\x27][^>]*>' "$TMPHTML" 2>/dev/null | head -1 || true)
+  if [[ -n "$ICON_LINK" ]]; then
+    HREF=$(get_href "$ICON_LINK")
+    [[ -n "$HREF" ]] && ICON_URL=$(resolve_url "$HREF")
+  fi
+fi
+
+# --- Step 4: /favicon.ico ---
+if [[ -z "$ICON_URL" ]]; then
+  STATUS=$(curl -sL --head -A "Mozilla/5.0" --max-time 5 -o /dev/null -w "%{http_code}" "${BASE_URL}/favicon.ico" 2>/dev/null || echo "0")
+  [[ "$STATUS" == "200" ]] && ICON_URL="${BASE_URL}/favicon.ico"
+fi
+
+echo "$ICON_URL"

@@ -1,0 +1,75 @@
+#!/bin/bash
+
+# Download icon and convert to PNG if needed
+# Usage: omarchy-icon-dl <icon_url> <output_path>
+
+set -e
+
+ICON_URL="$1"
+OUTPUT_PATH="$2"
+
+[[ -z "$ICON_URL" || -z "$OUTPUT_PATH" ]] && { echo "Usage: omarchy-icon-dl <icon_url> <output_path>" >&2; exit 1; }
+
+# Ensure output directory exists
+mkdir -p "$(dirname "$OUTPUT_PATH")"
+
+# Temp file
+TMPFILE=$(mktemp)
+trap "rm -f '$TMPFILE'" EXIT
+
+# Download
+if ! curl -sL --compressed -A "Mozilla/5.0" --max-time 15 -o "$TMPFILE" "$ICON_URL" 2>/dev/null; then
+  echo "Error: Failed to download icon" >&2
+  exit 1
+fi
+
+[[ ! -s "$TMPFILE" ]] && { echo "Error: Downloaded file is empty" >&2; exit 1; }
+
+# Detect type using file command or magic bytes
+get_type() {
+  if command -v file &>/dev/null; then
+    file --brief --mime-type "$1" 2>/dev/null
+  else
+    # Fallback: check magic bytes
+    local magic=$(head -c 4 "$1" | od -A n -t x1 | tr -d ' ')
+    case "$magic" in
+      89504e47) echo "image/png" ;;
+      ffd8ff*)  echo "image/jpeg" ;;
+      00000100) echo "image/x-icon" ;;
+      *)        echo "unknown" ;;
+    esac
+  fi
+}
+
+TYPE=$(get_type "$TMPFILE")
+
+# If already PNG, just copy
+if [[ "$TYPE" == "image/png" ]]; then
+  mv "$TMPFILE" "$OUTPUT_PATH"
+  exit 0
+fi
+
+# Need ImageMagick for conversion
+MAGICK=""
+command -v magick &>/dev/null && MAGICK="magick"
+command -v convert &>/dev/null && [[ -z "$MAGICK" ]] && MAGICK="convert"
+
+[[ -z "$MAGICK" ]] && { echo "Error: ImageMagick required for conversion" >&2; exit 1; }
+
+# For ICO, extract largest resolution
+if [[ "$TYPE" == "image/x-icon" || "$TYPE" == "image/vnd.microsoft.icon" ]]; then
+  IDX=$("$MAGICK" identify "$TMPFILE" 2>/dev/null | awk '{
+    match($3, /([0-9]+)x([0-9]+)/, d); s=d[1]*d[2]
+    if(s>m){m=s; i=NR-1}
+  } END{print i}')
+  [[ -z "$IDX" ]] && IDX=0
+  "$MAGICK" "${TMPFILE}[$IDX]" -flatten "$OUTPUT_PATH" 2>/dev/null || \
+  "$MAGICK" "$TMPFILE" -flatten "$OUTPUT_PATH" 2>/dev/null || \
+  { echo "Error: Conversion failed" >&2; exit 1; }
+else
+  "$MAGICK" "$TMPFILE" -flatten "$OUTPUT_PATH" 2>/dev/null || \
+  "$MAGICK" "$TMPFILE" "$OUTPUT_PATH" 2>/dev/null || \
+  { echo "Error: Conversion failed" >&2; exit 1; }
+fi
+
+[[ ! -s "$OUTPUT_PATH" ]] && { echo "Error: Output not created" >&2; exit 1; }
