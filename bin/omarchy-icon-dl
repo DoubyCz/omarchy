@@ -2,6 +2,12 @@
 
 # Download icon and convert to PNG if needed
 # Usage: omarchy-icon-dl <icon_url> <output_path>
+#
+# Dependencies:
+#   curl - required (download icons)
+#   file - optional (MIME detection, has magic bytes fallback)
+#   ImageMagick (magick or convert) - required only for non-PNG icons
+#   awk, od, head, mktemp - standard utils
 
 set -e
 

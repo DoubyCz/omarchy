@@ -4,6 +4,10 @@
 # Usage: omarchy-icon-extract <website_url>
 # Returns: URL of suitable icon, or empty if none found
 #
+# Dependencies:
+#   curl - required (download pages)
+#   grep, sed, tr, mktemp - standard utils
+#
 # Search order:
 #   1. apple-touch-icon (typically 180px, will be downscaled)
 #   2. PWA manifest icons (find ~128-192px)

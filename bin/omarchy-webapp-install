@@ -1,5 +1,15 @@
 #!/bin/bash
 
+# Install a webapp as desktop application
+# Usage: omarchy-webapp-install <name> <url> [icon_url] [exec_cmd] [mime_types]
+#        or run without args for interactive mode
+#
+# Dependencies:
+#   gum - interactive mode only
+#   omarchy-icon-extract - auto-detection (falls back to Google Favicons API)
+#   omarchy-icon-dl - download and convert icons to PNG
+#   curl - fallback icon download (Google Favicons API)
+
 set -e
 
 if [ "$#" -lt 2 ]; then
